@@ -51,6 +51,9 @@ typedef struct _KeyMap_t
     Bool used;
     Bool pressed;
     Bool mouse;
+    Bool latch;
+    Bool lock;
+    Bool latched;
     struct timeval down_at;
     struct _KeyMap_t *next;
 } KeyMap_t;
@@ -256,11 +259,24 @@ Key_t *key_add_key (Key_t *keys, KeyCode key)
     return rval;
 }
 
-void handle_key (XCape_t *self, KeyMap_t *key,
-        Bool mouse_pressed, int key_event)
+void generate_keys (XCape_t *self, Key_t *keys, Bool is_press)
 {
     Key_t *k;
 
+    for (k = keys; k != NULL; k = k->next)
+    {
+        if (self->debug) fprintf (stdout, "Generating %s, is_press=%d!\n",
+                XKeysymToString (XkbKeycodeToKeysym (self->ctrl_conn,
+                        k->key, 0, 0)), is_press);
+
+        XTestFakeKeyEvent (self->ctrl_conn, k->key, is_press, 0);
+        self->generated = key_add_key (self->generated, k->key);
+    }
+}
+
+void handle_key (XCape_t *self, KeyMap_t *key,
+        Bool mouse_pressed, int key_event)
+{
     if (key_event == KeyPress)
     {
         if (self->debug) fprintf (stdout, "Key pressed!\n");
@@ -289,21 +305,23 @@ void handle_key (XCape_t *self, KeyMap_t *key,
 
             if (!self->timeout_valid || timercmp (&timev, &self->timeout, <))
             {
-                for (k = key->to_keys; k != NULL; k = k->next)
+                if (key->latch || key->lock)
                 {
-                    if (self->debug) fprintf (stdout, "Generating %s!\n",
-                            XKeysymToString (XkbKeycodeToKeysym (self->ctrl_conn,
-                                    k->key, 0, 0)));
-
-                    XTestFakeKeyEvent (self->ctrl_conn,
-                            k->key, True, 0);
-                    self->generated = key_add_key (self->generated, k->key);
+                    if (!key->latched)
+                    {
+                        generate_keys (self, key->to_keys, True);
+                        key->latched = True;
+                    }
+                    else
+                    {
+                        generate_keys (self, key->to_keys, False);
+                        key->latched = False;
+                    }
                 }
-                for (k = key->to_keys; k != NULL; k = k->next)
+                else
                 {
-                    XTestFakeKeyEvent (self->ctrl_conn,
-                            k->key, False, 0);
-                    self->generated = key_add_key (self->generated, k->key);
+                    generate_keys (self, key->to_keys, True);
+                    generate_keys (self, key->to_keys, False);
                 }
                 XFlush (self->ctrl_conn);
             }
@@ -373,6 +391,13 @@ void intercept (XPointer user_data, XRecordInterceptData *data)
                 {
                     km->used = True;
                 }
+                else if (km->latch && km->latched && key_event == KeyRelease)
+                {
+                    generate_keys (self, km->to_keys, False);
+                    XFlush (self->ctrl_conn);
+                    km->latched = False;
+                    // TODO: km->used, km->pressed ???
+                }
             }
         }
     }
@@ -385,7 +410,7 @@ KeyMap_t *parse_token (Display *dpy, char *token, Bool debug)
 {
     KeyMap_t *km = NULL;
     KeySym    ks;
-    char      *from, *to, *key;
+    char      *from, *to, *option, *key;
     KeyCode   code;        // keycode (to)
     long      fromcode;    // keycode (from)
 
@@ -444,6 +469,25 @@ KeyMap_t *parse_token (Display *dpy, char *token, Bool debug)
             }
         }
 
+        for(; index(to, ':') != NULL ;)
+        {
+            option = strsep (&to, ":");
+            // if (option == NULL)
+            //     break;
+
+            if (strcmp(option, "Latch") == 0)
+            {
+                fprintf (stderr, "with option Latch");
+                km->latch = True;
+            }
+            else if (strcmp(option, "Lock") == 0)
+            {
+                fprintf (stderr, "with option Lock");
+                km->lock = True;
+            }
+            else
+                fprintf (stderr, "WARNING: option not recognised: '%s'\n", option);
+        }
         for(;;)
         {
             key = strsep (&to, "|");
