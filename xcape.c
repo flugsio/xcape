@@ -67,6 +67,7 @@ typedef struct _XCape_t
     Key_t *generated;
     struct timeval timeout;
     Bool timeout_valid;
+    struct timeval last_typekey_down_at;
 } XCape_t;
 
 /************************************************************************
@@ -159,8 +160,8 @@ int main (int argc, char **argv)
     if (self->map == NULL)
         exit (EXIT_FAILURE);
 
-    if (self->debug != True)
-        daemon (0, 0);
+    //if (self->debug != True)
+        //daemon (0, 0);
 
     sigemptyset (&self->sigset);
     sigaddset (&self->sigset, SIGINT);
@@ -270,6 +271,45 @@ void handle_key (XCape_t *self, KeyMap_t *key,
         if (self->timeout_valid)
             gettimeofday (&key->down_at, NULL);
 
+        // short circuit
+        if (65 == 65)
+        {
+            struct timeval timev = self->timeout;
+            gettimeofday (&timev, NULL);
+            timersub (&timev, &self->last_typekey_down_at, &timev);
+            if (timev.tv_usec < 300000 && timev.tv_sec <= 0)
+            {
+                if (self->debug) fprintf (stdout, "short circuit! tv_usec=%d, tv_sec=%d\n", (int)timev.tv_usec, (int)timev.tv_sec);
+                //generate_keys (self, , False);
+                //XTestFakeKeyEvent (self->ctrl_conn, key->from_kc, False, 0);
+                //self->generated = key_add_key (self->generated, key->from_kc);
+                XTestFakeKeyEvent (self->ctrl_conn, 65, False, 0);
+                self->generated = key_add_key (self->generated, 65);
+
+                //generate_keys (self, key->to_keys, True);
+                //generate_keys (self, key->to_keys, False);
+                for (k = key->to_keys; k != NULL; k = k->next)
+                {
+                    if (self->debug) fprintf (stdout, "Generating %s!\n",
+                            XKeysymToString (XkbKeycodeToKeysym (self->ctrl_conn,
+                                    k->key, 0, 0)));
+
+                    XTestFakeKeyEvent (self->ctrl_conn,
+                            k->key, True, 0);
+                    self->generated = key_add_key (self->generated, k->key);
+                }
+                for (k = key->to_keys; k != NULL; k = k->next)
+                {
+                    XTestFakeKeyEvent (self->ctrl_conn,
+                            k->key, False, 0);
+                    self->generated = key_add_key (self->generated, k->key);
+                }
+                XFlush (self->ctrl_conn);
+                key->used = True;
+                key->pressed = False;
+            }
+        }
+
         if (mouse_pressed)
         {
             key->used = True;
@@ -372,6 +412,16 @@ void intercept (XPointer user_data, XRecordInterceptData *data)
                 else if (km->pressed && key_event == KeyPress)
                 {
                     km->used = True;
+                }
+            }
+            if (key_event == KeyPress)
+            {
+                // if number/alfa key
+                if ((key_code >= 10 && key_code <=36) ||
+                    (key_code >= 38 && key_code <=49) ||
+                    (key_code >= 52 && key_code <=61))
+                {
+                    gettimeofday (&self->last_typekey_down_at, NULL);
                 }
             }
         }

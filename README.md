@@ -31,6 +31,10 @@ Debug mode. Does not fork into the background.
 If you hold a key longer than this timeout, xcape will not generate a key
 event. Default is 500 ms.
 
+### `- <tail ms>`
+
+If you press down a mapped key within tail ms of another key, xcape will imidietly execute the mapping (starting by simulating key-up for the mapped key).
+
 ### `-e <map-expression>`
 
 The expression has the grammar `'ModKey=Key[|OtherKey][;NextExpression]'`
